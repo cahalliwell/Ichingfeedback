@@ -33,6 +33,7 @@ import {
   CommonActions,
   DefaultTheme,
   NavigationContainer,
+  createNavigationContainerRef,
   useFocusEffect,
   useNavigation,
 } from "@react-navigation/native";
@@ -630,6 +631,8 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
+    storage: AsyncStorage,
+    detectSessionInUrl: false,
   },
 });
 
@@ -2858,6 +2861,30 @@ function LoginScreen() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [mode, setMode] = useState(null);
+  const [resetting, setResetting] = useState(false);
+
+  const handleResetPassword = useCallback(async () => {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      Alert.alert("Password reset", "Please enter your email first.");
+      return;
+    }
+    setResetting(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+        redirectTo: "https://aichinginsights.com/reset",
+      });
+      if (error) throw error;
+      Alert.alert(
+        "Check your email",
+        "We've sent password reset instructions to your inbox."
+      );
+    } catch (error) {
+      Alert.alert("Reset failed", error?.message || "Please try again.");
+    } finally {
+      setResetting(false);
+    }
+  }, [email]);
 
   const handleAuth = async (type) => {
     if (!email.trim() || !password) {
@@ -2879,6 +2906,10 @@ function LoginScreen() {
           password,
         });
         if (error) throw error;
+        Alert.alert(
+          "Verify your email",
+          "Please check your inbox for a verification link to activate your account."
+        );
       }
     } catch (error) {
       Alert.alert(
@@ -2944,6 +2975,12 @@ function LoginScreen() {
               <Text style={loginStyles.helperText}>
                 Use the credentials associated with your Supabase profile.
               </Text>
+
+              <Pressable onPress={handleResetPassword} disabled={resetting}>
+                <Text style={[loginStyles.helperText, { color: palette.goldDeep }]}>
+                  {resetting ? "Sending reset email..." : "Forgot password?"}
+                </Text>
+              </Pressable>
 
               <View style={loginStyles.buttonRow}>
                 <Pressable
@@ -3059,6 +3096,221 @@ const hexImageCache = {
   map: new Map(),
   promise: null,
 };
+
+function LegalDocumentScreen({ navigation, route }) {
+  const { title = "Document", url } = route.params || {};
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [paragraphs, setParagraphs] = useState([]);
+
+  const fetchContent = useCallback(async () => {
+    if (!url) {
+      setError("No link provided.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status}`);
+      }
+      const html = await response.text();
+      const textBlocks = htmlToParagraphs(html, { title });
+      setParagraphs(textBlocks);
+    } catch (err) {
+      setError(err?.message || "Unable to load document.");
+      setParagraphs([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [title, url]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchContent();
+    }, [fetchContent])
+  );
+
+  return (
+    <GradientBackground>
+      <SafeAreaView style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={stylesLegal.container}>
+          <Pressable onPress={() => navigation.goBack()} style={stylesLegal.backButton}>
+            <Ionicons name="chevron-back" size={20} color={palette.ink} />
+            <Text style={stylesLegal.backLabel}>Back</Text>
+          </Pressable>
+
+          <Text style={stylesLegal.title}>{title}</Text>
+
+          <SectionCard>
+            {loading ? (
+              <View style={stylesLegal.centerRow}>
+                <ActivityIndicator color={palette.goldDeep} />
+                <Text style={stylesLegal.loadingText}>Refreshing content…</Text>
+              </View>
+            ) : null}
+
+            {error ? (
+              <View style={stylesLegal.errorBox}>
+                <Text style={stylesLegal.errorText}>{error}</Text>
+                <GoldButton kind="secondary" onPress={fetchContent}>
+                  Try again
+                </GoldButton>
+              </View>
+            ) : null}
+
+            {!loading && !error ? (
+              <LegalContent blocks={paragraphsToBlocks(paragraphs, title)} />
+            ) : null}
+
+            <Text style={stylesLegal.footerNote}>
+              This page automatically pulls the latest wording from {url} so updates appear here
+              without requiring an app release.
+            </Text>
+          </SectionCard>
+        </ScrollView>
+      </SafeAreaView>
+    </GradientBackground>
+  );
+}
+
+const decodeHtmlEntities = (text) => {
+  if (!text) return "";
+  return text
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&ldquo;|&rdquo;/gi, '"')
+    .replace(/&lsquo;|&rsquo;/gi, "'")
+    .replace(/&mdash;/gi, "—")
+    .replace(/&ndash;/gi, "–")
+    .replace(/&bull;/gi, "•");
+};
+
+const htmlToParagraphs = (html, { title } = {}) => {
+  if (!html) return [];
+
+  const withBreaks = html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<(p|div|h[1-6]|li|ul|ol|section|article|header|footer|br|hr)[^>]*>/gi, "\n")
+    .replace(/<\/(p|div|h[1-6]|li|ul|ol|section|article|header|footer)>/gi, "\n");
+
+  const plain = withBreaks.replace(/<[^>]+>/g, " ");
+  const normalized = decodeHtmlEntities(plain)
+    .replace(/\r/g, "")
+    .replace(/\t/g, " ")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/ +/g, " ")
+    .trim();
+
+  const rawParagraphs = normalized
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const irrelevant = [
+    /google sites/i,
+    /report abuse/i,
+    /accessibility/i,
+    /sign in/i,
+    /cookies/i,
+    /help/i,
+  ];
+
+  const cleaned = rawParagraphs.filter((p) => !irrelevant.some((re) => re.test(p)));
+
+  if (!title) return cleaned;
+
+  const lowerTitle = title.toLowerCase();
+  const startIndex = cleaned.findIndex((p) => p.toLowerCase().includes(lowerTitle));
+  const trimmed = startIndex >= 0 ? cleaned.slice(startIndex) : cleaned;
+
+  const stopPatterns = [/last updated/i, /contact us/i, /email/i];
+  let endIndex = trimmed.length;
+  trimmed.forEach((p, idx) => {
+    if (idx > 0 && stopPatterns.some((re) => re.test(p))) {
+      endIndex = Math.min(endIndex, idx + 1);
+    }
+  });
+
+  return trimmed.slice(0, endIndex);
+};
+
+const isLikelyHeading = (text, title) => {
+  const trimmed = text.trim();
+  const words = trimmed.split(/\s+/).length;
+  const isShort = trimmed.length <= 80 && words <= 14;
+  const upperRatio = (trimmed.replace(/[^A-Z]/g, "").length || 0) /
+    (trimmed.replace(/[^A-Za-z]/g, "").length || 1);
+  const keywordHeading = /(introduction|overview|scope|purpose|data|information|rights|changes|contact|definitions|user obligations|security)/i.test(
+    trimmed
+  );
+  const matchesTitle = title && trimmed.toLowerCase().includes(title.toLowerCase());
+  return isShort && (upperRatio >= 0.5 || keywordHeading || matchesTitle || /:$/g.test(trimmed));
+};
+
+const isBulletLine = (text) => /^(?:\d+\.|[a-zA-Z]\)|•|-|\*)\s+/.test(text);
+
+const normalizeBulletText = (text) => text.replace(/^(?:\d+\.|[a-zA-Z]\)|•|-|\*)\s+/, "").trim();
+
+const paragraphsToBlocks = (paragraphs = [], title) => {
+  if (!paragraphs.length) return [];
+
+  return paragraphs.map((para) => {
+    if (isBulletLine(para)) {
+      return { type: "bullet", text: normalizeBulletText(para) };
+    }
+
+    if (isLikelyHeading(para, title)) {
+      return { type: "heading", text: para };
+    }
+
+    return { type: "paragraph", text: para };
+  });
+};
+
+function LegalContent({ blocks }) {
+  if (!blocks || blocks.length === 0) {
+    return (
+      <Text style={stylesLegal.bodyText}>
+        Content will appear here once available from the source link.
+      </Text>
+    );
+  }
+
+  return (
+    <View>
+      {blocks.map((block, index) => {
+        if (block.type === "heading") {
+          return (
+            <Text key={index} style={stylesLegal.headingText}>
+              {block.text}
+            </Text>
+          );
+        }
+
+        if (block.type === "bullet") {
+          return (
+            <View key={index} style={stylesLegal.bulletRow}>
+              <View style={stylesLegal.bulletDot} />
+              <Text style={stylesLegal.bulletText}>{block.text}</Text>
+            </View>
+          );
+        }
+
+        return (
+          <Text key={index} style={stylesLegal.bodyText}>
+            {block.text}
+          </Text>
+        );
+      })}
+    </View>
+  );
+}
 
 function HexagonThumbnail({ uri, hexNumber = null, size = 52 }) {
   const clipIdRef = useRef(null);
@@ -3261,7 +3513,7 @@ function ReadingModal({
     changingSummaries.length > 0;
 
   return (
-    <Modal visible={visible} animationType="slide">
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <GradientBackground>
         <SafeAreaView style={{ flex: 1 }}>
           <ScrollView contentContainerStyle={stylesReading.container}>
@@ -6054,6 +6306,13 @@ function SettingsScreen({ navigation }) {
   const [feedback, setFeedback] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
+  const handleOpenLegal = useCallback(
+    (title, url) => {
+      navigation.navigate("LegalDocument", { title, url });
+    },
+    [navigation]
+  );
+
   const handleOpenPremium = useCallback(() => {
     navigation.navigate("Premium");
   }, [navigation]);
@@ -6099,14 +6358,16 @@ function SettingsScreen({ navigation }) {
     const body = encodeURIComponent(trimmed);
     const mailto = `mailto:i.ching.insights64@gmail.com?subject=${subject}&body=${body}`;
     try {
-      const canOpen = await Linking.canOpenURL(mailto);
-      if (!canOpen) {
-        throw new Error("No email app available");
-      }
       await Linking.openURL(mailto);
       setFeedback("");
     } catch (error) {
-      Alert.alert("Unable to send email", error?.message || "Please try again.");
+      Alert.alert(
+        "Unable to open email app",
+        "Please make sure an email application is installed. You can also email i.ching.insights64@gmail.com and include your feedback.",
+        [
+          { text: "OK" },
+        ]
+      );
     }
   }, [feedback]);
 
@@ -6186,7 +6447,12 @@ function SettingsScreen({ navigation }) {
             </Pressable>
             <View style={stylesSettings.rowDivider} />
             <Pressable
-              onPress={() => handleOpenLink("https://aichinginsights.com/privacy")}
+              onPress={() =>
+                handleOpenLegal(
+                  "Privacy Policy",
+                  "https://sites.google.com/view/ichinginsightspp/home"
+                )
+              }
               style={stylesSettings.row}
             >
               <Text style={stylesSettings.rowLabel}>Privacy Policy</Text>
@@ -6194,7 +6460,12 @@ function SettingsScreen({ navigation }) {
             </Pressable>
             <View style={stylesSettings.rowDivider} />
             <Pressable
-              onPress={() => handleOpenLink("https://aichinginsights.com/terms")}
+              onPress={() =>
+                handleOpenLegal(
+                  "Terms and Conditions",
+                  "https://sites.google.com/view/ai-ching-insightstc/home"
+                )
+              }
               style={stylesSettings.row}
             >
               <Text style={stylesSettings.rowLabel}>Terms and Conditions</Text>
@@ -6324,6 +6595,101 @@ const stylesSettings = StyleSheet.create({
   },
 });
 
+const stylesLegal = StyleSheet.create({
+  container: {
+    padding: theme.space(2.5),
+    paddingBottom: theme.space(4),
+    paddingTop: theme.space(2.5) + screenTopPadding,
+  },
+  backButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: palette.white,
+    borderRadius: theme.radius,
+    borderWidth: 1,
+    borderColor: palette.border,
+    paddingHorizontal: theme.space(1),
+    paddingVertical: 6,
+    marginBottom: theme.space(1.5),
+  },
+  backLabel: {
+    marginLeft: 6,
+    fontFamily: fonts.body,
+    color: palette.ink,
+    fontSize: 14,
+  },
+  title: {
+    fontFamily: fonts.title,
+    fontSize: 24,
+    color: palette.ink,
+    marginBottom: theme.space(1.5),
+  },
+  bodyText: {
+    fontFamily: fonts.body,
+    fontSize: 15,
+    color: palette.ink,
+    lineHeight: 22,
+    marginBottom: theme.space(1),
+  },
+  headingText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 16,
+    color: palette.ink,
+    marginTop: theme.space(1),
+    marginBottom: theme.space(0.5),
+  },
+  bulletRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    marginBottom: theme.space(0.5),
+  },
+  bulletDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: palette.goldDeep,
+    marginTop: 7,
+  },
+  bulletText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 15,
+    color: palette.ink,
+    lineHeight: 22,
+  },
+  footerNote: {
+    marginTop: theme.space(1.5),
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: palette.inkMuted,
+  },
+  centerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: theme.space(1),
+  },
+  loadingText: {
+    marginLeft: theme.space(1),
+    fontFamily: fonts.body,
+    color: palette.ink,
+  },
+  errorBox: {
+    borderWidth: 1,
+    borderColor: palette.danger,
+    backgroundColor: "#FDF4F3",
+    borderRadius: theme.radius,
+    padding: theme.space(1.5),
+    marginBottom: theme.space(1.5),
+  },
+  errorText: {
+    fontFamily: fonts.bodyBold,
+    color: palette.dangerDark,
+    marginBottom: theme.space(0.5),
+  },
+});
+
 // 🧭 Navigation
 const navTheme = {
   ...DefaultTheme,
@@ -6348,6 +6714,7 @@ function HomeStack() {
       <Stack.Screen name="Guide" component={GuideScreen} />
       <Stack.Screen name="Settings" component={SettingsScreen} />
       <Stack.Screen name="Premium" component={PremiumScreen} />
+      <Stack.Screen name="LegalDocument" component={LegalDocumentScreen} />
     </Stack.Navigator>
   );
 }
@@ -6411,6 +6778,9 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const [navigationReady, setNavigationReady] = useState(false);
+  const [pendingDeepLinkNavigation, setPendingDeepLinkNavigation] = useState(false);
+  const navigationRef = useRef(createNavigationContainerRef());
 
   const fetchProfile = useCallback(async () => {
     const userId = session?.user?.id;
@@ -6471,6 +6841,60 @@ export default function App() {
     fetchProfile();
   }, [authReady, fetchProfile]);
 
+  const navigateToHome = useCallback(() => {
+    if (!navigationRef.current) return;
+    if (navigationRef.current.isReady()) {
+      navigationRef.current.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [{ name: "Home" }],
+        })
+      );
+      setPendingDeepLinkNavigation(false);
+    } else {
+      setPendingDeepLinkNavigation(true);
+    }
+  }, []);
+
+  const processDeepLink = useCallback(
+    async (url) => {
+      if (!url) return;
+      const { data, error } = await supabase.auth.exchangeCodeForSession(url);
+      if (error) {
+        console.error("Supabase auth error:", error);
+      } else {
+        console.log("Deep link login successful", data.user);
+        navigateToHome();
+      }
+    },
+    [navigateToHome]
+  );
+
+  useEffect(() => {
+    const handleUrl = ({ url }) => {
+      processDeepLink(url);
+    };
+
+    const subscription = Linking.addEventListener("url", handleUrl);
+
+    (async () => {
+      const initialUrl = await Linking.getInitialURL();
+      if (initialUrl) {
+        await processDeepLink(initialUrl);
+      }
+    })();
+
+    return () => {
+      subscription?.remove();
+    };
+  }, [processDeepLink]);
+
+  useEffect(() => {
+    if (navigationReady && pendingDeepLinkNavigation) {
+      navigateToHome();
+    }
+  }, [navigationReady, pendingDeepLinkNavigation, navigateToHome]);
+
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
   }, []);
@@ -6522,13 +6946,25 @@ export default function App() {
     ]
   );
 
+  const linking = useMemo(
+    () => ({
+      prefixes: ["ichinginsightsai://"],
+    }),
+    []
+  );
+
   if (!marcellusLoaded || !loraLoaded || !authReady) return null;
 
   return (
     <AuthContext.Provider value={authValue}>
       <RevenueCatContext.Provider value={revenueCatValue || defaultRevenueCatState}>
         <JournalProvider>
-          <NavigationContainer theme={navTheme}>
+          <NavigationContainer
+            ref={navigationRef}
+            onReady={() => setNavigationReady(true)}
+            theme={navTheme}
+            linking={linking}
+          >
             {session ? <MainTabs /> : <AuthStackScreen />}
           </NavigationContainer>
         </JournalProvider>
