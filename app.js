@@ -3014,6 +3014,144 @@ function LoginScreen() {
   );
 }
 
+function NewPasswordScreen({ navigation }) {
+  const { completePasswordResetFlow, signOut } = useAuth();
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const exitToLogin = useCallback(() => {
+    completePasswordResetFlow?.();
+    navigation.dispatch(
+      CommonActions.reset({
+        index: 0,
+        routes: [{ name: "Login" }],
+      })
+    );
+  }, [completePasswordResetFlow, navigation]);
+
+  const handleUpdatePassword = useCallback(async () => {
+    if (!password || !confirmPassword) {
+      Alert.alert("New password", "Please enter and confirm your new password.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      Alert.alert("Passwords do not match", "Please ensure both fields match.");
+      return;
+    }
+    if (password.length < 6) {
+      Alert.alert("Password too short", "Please choose at least 6 characters.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
+      Alert.alert(
+        "Password updated",
+        "Your password has been changed. Please sign in with your new credentials.",
+        [
+          {
+            text: "OK",
+            onPress: async () => {
+              await signOut();
+              exitToLogin();
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      Alert.alert("Update failed", error?.message || "Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }, [confirmPassword, exitToLogin, password, signOut]);
+
+  const handleCancel = useCallback(async () => {
+    await signOut();
+    exitToLogin();
+  }, [exitToLogin, signOut]);
+
+  return (
+    <LinearGradient
+      colors={loginGradientColors}
+      style={loginStyles.gradient}
+      start={{ x: 0.2, y: 0 }}
+      end={{ x: 0.8, y: 1 }}
+    >
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
+      >
+        <SafeAreaView style={{ flex: 1 }}>
+          <ScrollView contentContainerStyle={loginStyles.container} keyboardShouldPersistTaps="handled">
+            <View style={loginStyles.card}>
+              <View style={loginStyles.titleRow}>
+                <Ionicons name="key-outline" size={28} color={palette.goldDeep} />
+                <Text style={loginStyles.title}>Set New Password</Text>
+              </View>
+              <Text style={loginStyles.subtitle}>
+                Create a new password to finish resetting your account access.
+              </Text>
+
+              <Text style={loginStyles.label}>New Password</Text>
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Enter a new password"
+                placeholderTextColor={palette.inkMuted}
+                secureTextEntry
+                textContentType="newPassword"
+                autoCapitalize="none"
+                style={loginStyles.input}
+              />
+
+              <Text style={loginStyles.label}>Confirm Password</Text>
+              <TextInput
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="Re-enter your new password"
+                placeholderTextColor={palette.inkMuted}
+                secureTextEntry
+                textContentType="newPassword"
+                autoCapitalize="none"
+                style={loginStyles.input}
+              />
+
+              <View style={loginStyles.buttonRow}>
+                <Pressable
+                  style={[loginStyles.button, loginStyles.buttonSecondary]}
+                  onPress={handleCancel}
+                  disabled={submitting}
+                >
+                  {submitting ? (
+                    <ActivityIndicator color={palette.gold} />
+                  ) : (
+                    <Text style={loginStyles.buttonTextSecondary}>Cancel</Text>
+                  )}
+                </Pressable>
+                <Pressable
+                  style={[loginStyles.button, loginStyles.buttonPrimary]}
+                  onPress={handleUpdatePassword}
+                  disabled={submitting}
+                >
+                  {submitting ? (
+                    <ActivityIndicator color={palette.white} />
+                  ) : (
+                    <Text style={loginStyles.buttonTextPrimary}>Save Password</Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
+  );
+}
+
 // 🟡 Hexagram lines
 function Line({ v, moving }) {
   const color = moving ? palette.gold : palette.ink;
@@ -6582,10 +6720,11 @@ const navTheme = {
   colors: { ...DefaultTheme.colors, background: "transparent" },
 };
 
-function AuthStackScreen() {
+function AuthStackScreen({ initialRouteName = "Login" }) {
   return (
-    <AuthStack.Navigator screenOptions={{ headerShown: false }}>
+    <AuthStack.Navigator screenOptions={{ headerShown: false }} initialRouteName={initialRouteName}>
       <AuthStack.Screen name="Login" component={LoginScreen} />
+      <AuthStack.Screen name="NewPassword" component={NewPasswordScreen} />
     </AuthStack.Navigator>
   );
 }
@@ -6782,6 +6921,7 @@ export default function App() {
   }, [navigationReady, pendingDeepLinkNavigation, navigateToHome]);
 
   const signOut = useCallback(async () => {
+    setPendingPasswordReset(false);
     await supabase.auth.signOut();
   }, []);
 
@@ -6817,6 +6957,8 @@ export default function App() {
       subscriptionTier: resolvedSubscriptionTier,
       revenueCatCustomerInfo: revenueCatValue?.customerInfo ?? null,
       revenueCatEntitlements: revenueCatValue?.activeEntitlementIds ?? [],
+      pendingPasswordReset,
+      completePasswordResetFlow: () => setPendingPasswordReset(false),
     }),
     [
       session,
@@ -6829,6 +6971,7 @@ export default function App() {
       resolvedSubscriptionTier,
       revenueCatValue?.customerInfo,
       revenueCatValue?.activeEntitlementIds,
+      pendingPasswordReset,
     ]
   );
 
