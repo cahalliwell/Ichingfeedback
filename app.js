@@ -2872,7 +2872,7 @@ function LoginScreen() {
     setResetting(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-        redirectTo: "ichinginsightsai://auth/callback",
+        redirectTo: "https://aichinginsights.com/reset",
       });
       if (error) throw error;
       Alert.alert(
@@ -3254,7 +3254,7 @@ function LegalDocumentScreen({ navigation, route }) {
         throw new Error(`Request failed: ${response.status}`);
       }
       const html = await response.text();
-      const textBlocks = htmlToParagraphs(html, { title });
+      const textBlocks = htmlToParagraphs(html);
       setParagraphs(textBlocks);
     } catch (err) {
       setError(err?.message || "Unable to load document.");
@@ -3262,7 +3262,7 @@ function LegalDocumentScreen({ navigation, route }) {
     } finally {
       setLoading(false);
     }
-  }, [title, url]);
+  }, [url]);
 
   useFocusEffect(
     useCallback(() => {
@@ -3299,7 +3299,19 @@ function LegalDocumentScreen({ navigation, route }) {
             ) : null}
 
             {!loading && !error ? (
-              <LegalContent blocks={paragraphsToBlocks(paragraphs, title)} />
+              <View>
+                {paragraphs.length === 0 ? (
+                  <Text style={stylesLegal.bodyText}>
+                    Content will appear here once available from the source link.
+                  </Text>
+                ) : (
+                  paragraphs.map((text, index) => (
+                    <Text key={index} style={stylesLegal.bodyText}>
+                      {text}
+                    </Text>
+                  ))
+                )}
+              </View>
             ) : null}
 
             <Text style={stylesLegal.footerNote}>
@@ -3327,7 +3339,7 @@ const decodeHtmlEntities = (text) => {
     .replace(/&bull;/gi, "•");
 };
 
-const htmlToParagraphs = (html, { title } = {}) => {
+const htmlToParagraphs = (html) => {
   if (!html) return [];
 
   const withBreaks = html
@@ -3345,110 +3357,11 @@ const htmlToParagraphs = (html, { title } = {}) => {
     .replace(/ +/g, " ")
     .trim();
 
-  const rawParagraphs = normalized
+  return normalized
     .split(/\n{2,}/)
     .map((p) => p.trim())
     .filter(Boolean);
-
-  const irrelevant = [
-    /google sites/i,
-    /report abuse/i,
-    /accessibility/i,
-    /sign in/i,
-    /cookies/i,
-    /help/i,
-  ];
-
-  const cleaned = rawParagraphs.filter((p) => !irrelevant.some((re) => re.test(p)));
-
-  if (!title) return cleaned;
-
-  const lowerTitle = title.toLowerCase();
-  const startIndex = cleaned.findIndex((p) => p.toLowerCase().includes(lowerTitle));
-  const trimmed = startIndex >= 0 ? cleaned.slice(startIndex) : cleaned;
-
-  const stopPatterns = [/last updated/i, /contact us/i, /email/i];
-  let endIndex = trimmed.length;
-  trimmed.forEach((p, idx) => {
-    if (idx > 0 && stopPatterns.some((re) => re.test(p))) {
-      endIndex = Math.min(endIndex, idx + 1);
-    }
-  });
-
-  return trimmed.slice(0, endIndex);
 };
-
-const isLikelyHeading = (text, title) => {
-  const trimmed = text.trim();
-  const words = trimmed.split(/\s+/).length;
-  const isShort = trimmed.length <= 80 && words <= 14;
-  const upperRatio = (trimmed.replace(/[^A-Z]/g, "").length || 0) /
-    (trimmed.replace(/[^A-Za-z]/g, "").length || 1);
-  const keywordHeading = /(introduction|overview|scope|purpose|data|information|rights|changes|contact|definitions|user obligations|security)/i.test(
-    trimmed
-  );
-  const matchesTitle = title && trimmed.toLowerCase().includes(title.toLowerCase());
-  return isShort && (upperRatio >= 0.5 || keywordHeading || matchesTitle || /:$/g.test(trimmed));
-};
-
-const isBulletLine = (text) => /^(?:\d+\.|[a-zA-Z]\)|•|-|\*)\s+/.test(text);
-
-const normalizeBulletText = (text) => text.replace(/^(?:\d+\.|[a-zA-Z]\)|•|-|\*)\s+/, "").trim();
-
-const paragraphsToBlocks = (paragraphs = [], title) => {
-  if (!paragraphs.length) return [];
-
-  return paragraphs.map((para) => {
-    if (isBulletLine(para)) {
-      return { type: "bullet", text: normalizeBulletText(para) };
-    }
-
-    if (isLikelyHeading(para, title)) {
-      return { type: "heading", text: para };
-    }
-
-    return { type: "paragraph", text: para };
-  });
-};
-
-function LegalContent({ blocks }) {
-  if (!blocks || blocks.length === 0) {
-    return (
-      <Text style={stylesLegal.bodyText}>
-        Content will appear here once available from the source link.
-      </Text>
-    );
-  }
-
-  return (
-    <View>
-      {blocks.map((block, index) => {
-        if (block.type === "heading") {
-          return (
-            <Text key={index} style={stylesLegal.headingText}>
-              {block.text}
-            </Text>
-          );
-        }
-
-        if (block.type === "bullet") {
-          return (
-            <View key={index} style={stylesLegal.bulletRow}>
-              <View style={stylesLegal.bulletDot} />
-              <Text style={stylesLegal.bulletText}>{block.text}</Text>
-            </View>
-          );
-        }
-
-        return (
-          <Text key={index} style={stylesLegal.bodyText}>
-            {block.text}
-          </Text>
-        );
-      })}
-    </View>
-  );
-}
 
 function HexagonThumbnail({ uri, hexNumber = null, size = 52 }) {
   const clipIdRef = useRef(null);
@@ -6444,20 +6357,12 @@ function SettingsScreen({ navigation }) {
   const [feedback, setFeedback] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const handleOpenLegal = useCallback(async (url) => {
-    try {
-      await Linking.openURL(url);
-    } catch (error) {
-      console.log("Open legal link error", error?.message || error);
-      Alert.alert(
-        "Unable to open link",
-        "Please try again or visit the link directly in your browser.",
-        [
-          { text: "OK" },
-        ]
-      );
-    }
-  }, []);
+  const handleOpenLegal = useCallback(
+    (title, url) => {
+      navigation.navigate("LegalDocument", { title, url });
+    },
+    [navigation]
+  );
 
   const handleOpenPremium = useCallback(() => {
     navigation.navigate("Premium");
@@ -6594,7 +6499,10 @@ function SettingsScreen({ navigation }) {
             <View style={stylesSettings.rowDivider} />
             <Pressable
               onPress={() =>
-                handleOpenLegal("https://sites.google.com/view/ichinginsightspp/home")
+                handleOpenLegal(
+                  "Privacy Policy",
+                  "https://sites.google.com/view/ichinginsightspp/home"
+                )
               }
               style={stylesSettings.row}
             >
@@ -6604,7 +6512,10 @@ function SettingsScreen({ navigation }) {
             <View style={stylesSettings.rowDivider} />
             <Pressable
               onPress={() =>
-                handleOpenLegal("https://sites.google.com/view/ai-ching-insightstc/home")
+                handleOpenLegal(
+                  "Terms and Conditions",
+                  "https://sites.google.com/view/ai-ching-insightstc/home"
+                )
               }
               style={stylesSettings.row}
             >
@@ -6772,33 +6683,6 @@ const stylesLegal = StyleSheet.create({
     lineHeight: 22,
     marginBottom: theme.space(1),
   },
-  headingText: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 16,
-    color: palette.ink,
-    marginTop: theme.space(1),
-    marginBottom: theme.space(0.5),
-  },
-  bulletRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    marginBottom: theme.space(0.5),
-  },
-  bulletDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: palette.goldDeep,
-    marginTop: 7,
-  },
-  bulletText: {
-    flex: 1,
-    fontFamily: fonts.body,
-    fontSize: 15,
-    color: palette.ink,
-    lineHeight: 22,
-  },
   footerNote: {
     marginTop: theme.space(1.5),
     fontFamily: fonts.body,
@@ -6921,7 +6805,6 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [navigationReady, setNavigationReady] = useState(false);
   const [pendingDeepLinkNavigation, setPendingDeepLinkNavigation] = useState(false);
-  const [pendingPasswordReset, setPendingPasswordReset] = useState(false);
   const navigationRef = useRef(createNavigationContainerRef());
 
   const fetchProfile = useCallback(async () => {
@@ -7001,24 +6884,12 @@ export default function App() {
   const processDeepLink = useCallback(
     async (url) => {
       if (!url) return;
-      let isRecoveryLink = false;
-      try {
-        const parsed = new URL(url);
-        isRecoveryLink = parsed.searchParams.get("type") === "recovery";
-      } catch (error) {
-        console.log("Deep link parse error:", error?.message || error);
-      }
-
       const { data, error } = await supabase.auth.exchangeCodeForSession(url);
       if (error) {
         console.error("Supabase auth error:", error);
       } else {
         console.log("Deep link login successful", data.user);
-        if (isRecoveryLink) {
-          setPendingPasswordReset(true);
-        } else {
-          navigateToHome();
-        }
+        navigateToHome();
       }
     },
     [navigateToHome]
@@ -7123,13 +6994,7 @@ export default function App() {
             theme={navTheme}
             linking={linking}
           >
-            {pendingPasswordReset ? (
-              <AuthStackScreen initialRouteName="NewPassword" />
-            ) : session ? (
-              <MainTabs />
-            ) : (
-              <AuthStackScreen initialRouteName="Login" />
-            )}
+            {session ? <MainTabs /> : <AuthStackScreen />}
           </NavigationContainer>
         </JournalProvider>
       </RevenueCatContext.Provider>
