@@ -33,6 +33,7 @@ import {
   CommonActions,
   DefaultTheme,
   NavigationContainer,
+  createNavigationContainerRef,
   useFocusEffect,
   useNavigation,
 } from "@react-navigation/native";
@@ -6663,6 +6664,9 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const [navigationReady, setNavigationReady] = useState(false);
+  const [pendingDeepLinkNavigation, setPendingDeepLinkNavigation] = useState(false);
+  const navigationRef = useRef(createNavigationContainerRef());
 
   const fetchProfile = useCallback(async () => {
     const userId = session?.user?.id;
@@ -6723,6 +6727,60 @@ export default function App() {
     fetchProfile();
   }, [authReady, fetchProfile]);
 
+  const navigateToHome = useCallback(() => {
+    if (!navigationRef.current) return;
+    if (navigationRef.current.isReady()) {
+      navigationRef.current.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [{ name: "Home" }],
+        })
+      );
+      setPendingDeepLinkNavigation(false);
+    } else {
+      setPendingDeepLinkNavigation(true);
+    }
+  }, []);
+
+  const processDeepLink = useCallback(
+    async (url) => {
+      if (!url) return;
+      const { data, error } = await supabase.auth.exchangeCodeForSession(url);
+      if (error) {
+        console.error("Supabase auth error:", error);
+      } else {
+        console.log("Deep link login successful", data.user);
+        navigateToHome();
+      }
+    },
+    [navigateToHome]
+  );
+
+  useEffect(() => {
+    const handleUrl = ({ url }) => {
+      processDeepLink(url);
+    };
+
+    const subscription = Linking.addEventListener("url", handleUrl);
+
+    (async () => {
+      const initialUrl = await Linking.getInitialURL();
+      if (initialUrl) {
+        await processDeepLink(initialUrl);
+      }
+    })();
+
+    return () => {
+      subscription?.remove();
+    };
+  }, [processDeepLink]);
+
+  useEffect(() => {
+    if (navigationReady && pendingDeepLinkNavigation) {
+      navigateToHome();
+    }
+  }, [navigationReady, pendingDeepLinkNavigation, navigateToHome]);
+
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
   }, []);
@@ -6774,13 +6832,25 @@ export default function App() {
     ]
   );
 
+  const linking = useMemo(
+    () => ({
+      prefixes: ["ichinginsightsai://"],
+    }),
+    []
+  );
+
   if (!marcellusLoaded || !loraLoaded || !authReady) return null;
 
   return (
     <AuthContext.Provider value={authValue}>
       <RevenueCatContext.Provider value={revenueCatValue || defaultRevenueCatState}>
         <JournalProvider>
-          <NavigationContainer theme={navTheme}>
+          <NavigationContainer
+            ref={navigationRef}
+            onReady={() => setNavigationReady(true)}
+            theme={navTheme}
+            linking={linking}
+          >
             {session ? <MainTabs /> : <AuthStackScreen />}
           </NavigationContainer>
         </JournalProvider>
